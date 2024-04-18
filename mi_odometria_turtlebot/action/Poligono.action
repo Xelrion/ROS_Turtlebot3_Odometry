@@ -1,0 +1,11 @@
+# GOAL
+float64 side_length # Longitud del lado del polígono
+int64 side_amount # Número de lados del polígono
+---
+# RESULT
+bool success # True si el polígono se ha ejecutado correctamente
+---
+# FEEDBACK
+string current_movement # Movimiento actual: lado, giro...
+int64 movement_id # Id del movimiento actual: lado 1, giro 1...
+float64 movement_state # Posición u orientación actual
