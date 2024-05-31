@@ -77,8 +77,6 @@ class MovimientoLaser_ActionServer:
 
     def laser_callback(self, msg:LaserScan):
         # Comprueba si hay un obstáculo frente al robot en el rango de ángulos solicitado frente a él
-        #print(str(msg.ranges[0]) + ' ' + str(msg.ranges[89]) + ' ' + str(msg.ranges[179]) + ' ' + str(msg.ranges[269]))
-        #print(str(msg.ranges[2]) + ' ' + str(msg.ranges[-2]))
         angle = 0
         laser_measurement = 0
         obstacle_detected = False
