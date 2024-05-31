@@ -19,9 +19,11 @@ if __name__ == '__main__':
     triangulo.wait_for_server()
     rospy.loginfo('Servidor encontrado.')
     try:
+        # Entrada de usuario
+        side_length = float(input('Elige la longitud deseada para los lados del triángulo (metros):\n'))
         # Envía el mensaje de petición al servidor y espera a que termine la acción
-        rospy.loginfo('Servidor conectado. Enviando petición de línea recta, 1 metro...')
-        goal = TrianguloGoal(side_length=1)
+        rospy.loginfo('Servidor conectado. Enviando petición de triángulo...')
+        goal = TrianguloGoal(side_length=side_length)
         triangulo.send_goal(goal,feedback_cb=feedback_callback)
         triangulo.wait_for_result()
         success = triangulo.get_result()

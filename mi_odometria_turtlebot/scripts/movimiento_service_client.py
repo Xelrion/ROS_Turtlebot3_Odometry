@@ -10,19 +10,20 @@ if __name__ == '__main__':
     rospy.wait_for_service('movimiento_server')
     rospy.loginfo('Servidor encontrado.')
     try:
+        # Entrada de usuario
+        tipo_movimiento = int(input('''Elige el tipo de movimiento deseado:\n
+                            0 = Lineal\n
+                            1 = Rotación\n'''))
+        magnitud_movimiento = float(input('''Elige la magnitud del movimiento deseado:\n
+                            Lineal -> Metros\n
+                            Rotación -> Grados sexagesimales\n'''))
         # Envía el mensaje de petición al servidor y espera a que termine la acción
         movimiento = rospy.ServiceProxy('movimiento_server', MovLinRot)
-        rospy.loginfo('Servidor conectado. Enviando petición de línea recta, 1 metro...')
-        success = movimiento(MovLinRotRequest(type=0,magnitude=1))
+        rospy.loginfo('Servidor conectado. Enviando petición de movimiento...')
+        success = movimiento(MovLinRotRequest(type=tipo_movimiento,magnitude=magnitud_movimiento))
         if success:
-            rospy.loginfo('Respuesta recibida. El robot se ha desplazado en línea recta.')
+            rospy.loginfo('Respuesta recibida. El robot se ha desplazado correctamente.')
         else:
             rospy.logwarn('Respuesta recibida. El robot no ha avanzado correctamente.')
-        rospy.loginfo('Enviando petición de rotación, 90º...')
-        success = movimiento(MovLinRotRequest(type=1,magnitude=90))
-        if success:
-            rospy.loginfo('Respuesta recibida. El robot ha rotado 90º.')
-        else:
-            rospy.logwarn('Respuesta recibida. El robot no ha rotado correctamente.')
     except rospy.ServiceException as e:
         rospy.logwarn("La comunicación con el servidor ha fallado: %s"%e)

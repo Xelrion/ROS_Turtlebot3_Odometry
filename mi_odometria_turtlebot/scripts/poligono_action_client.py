@@ -21,6 +21,7 @@ if __name__ == '__main__':
     try:
         # Envía el mensaje de petición al servidor y espera a que termine la acción
         rospy.loginfo('Servidor conectado.')
+        # Entrada de usuario
         side_length = float(input('Ingrese longitud de lado del polígono:\n'))
         side_amount = int(input('Ingrese número de lados del polígono:\n'))
         rospy.loginfo('Enviando petición al servidor: polígono de {} lados, con longitud de lado: {}'.format(side_amount, side_length))

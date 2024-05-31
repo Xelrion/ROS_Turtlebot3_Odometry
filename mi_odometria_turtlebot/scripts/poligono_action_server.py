@@ -21,12 +21,22 @@ class Poligono_ActionServer:
     _rotation_movement_id = 0
     _success = True
 
-    def __init__(self, name='poligono_action', max_linear_speed=0.05, max_rotation_speed=0.5, max_angle_diff=5.0):
+    def __init__(self,
+                 name='poligono_action',
+                 max_linear_speed=0.1,
+                 min_linear_speed=0.01,
+                 max_rotation_speed=0.5,
+                 min_rotation_speed=0.1,
+                 p_regulator = 1.5,
+                 max_angle_diff=2):
         # Nombre del servidor de servicio
         self._name = name
         # Parámetros de configuración del movimiento
         self._max_linear_speed = max_linear_speed
+        self._min_linear_speed = min_linear_speed
         self._max_rotation_speed = max_rotation_speed
+        self._min_rotation_speed = min_rotation_speed
+        self._p_regulator = p_regulator
         self._max_angle_diff = math.radians(max_angle_diff)
         # Frecuencia de actualización del servidor
         self._r = rospy.Rate(10)
@@ -56,7 +66,7 @@ class Poligono_ActionServer:
         # Obtiene la orientación del robot sobre el eje z a partir de cuaternios
         orientation_q = msg.pose.pose.orientation
         orientation_list = [ orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w ]
-        (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
+        (_, _, yaw) = euler_from_quaternion(orientation_list)
         self._odom_orientation_yaw = yaw
 
     def movement_stop(self):
@@ -83,8 +93,14 @@ class Poligono_ActionServer:
         twist.linear.x = self._max_linear_speed
         # Envía el mensaje hasta que el robot alcance su destino
         while current_distance < distance_to_move:
-            rospy.logdebug('Distancia actual recorrida: ' + str(current_distance))
+            twist.linear.x = max(min(self._p_regulator*(distance_to_move-current_distance), self._max_linear_speed), self._min_linear_speed)
             self._pub.publish(twist)
+            # Información al usuario sobre el estado actual del movimiento
+            rospy.loginfo('{current}m/{goal}m ({percent}%)'.format(
+                goal = round(distance_to_move, 2),
+                current = round(current_distance, 2),
+                percent = round(100*current_distance/distance_to_move,2)
+            ))
             # Envía el feedback al cliente
             feedback_msg.current_movement = 'Lado'
             feedback_msg.movement_id = self._linear_movement_id
@@ -120,8 +136,14 @@ class Poligono_ActionServer:
         twist.angular.z = self._max_rotation_speed
         # Envía el mensaje hasta que el robot alcance la orientación objetivo
         while abs(remaining_angle) > self._max_angle_diff:
-            rospy.logdebug('Ángulo de rotación restante: ' + str(math.degrees(remaining_angle)))
+            twist.angular.z = math.copysign(1.0, rotation_angle) * max(min(self._p_regulator*(abs(remaining_angle)), self._max_rotation_speed), self._min_rotation_speed)
             self._pub.publish(twist)
+            # Información al usuario sobre el estado actual del movimiento
+            rospy.loginfo('{current}º/{goal}º --- Ángulo restante: ({remaining}º)'.format(
+                goal = round(math.degrees(goal_orientation_yaw), 2),
+                current = round(math.degrees(self._odom_orientation_yaw), 2),
+                remaining = round(math.degrees(remaining_angle),2)
+            ))
             # Envía el feedback al cliente
             feedback_msg.current_movement = 'Rotación'
             feedback_msg.movement_id = self._rotation_movement_id
@@ -138,7 +160,15 @@ class Poligono_ActionServer:
         rospy.loginfo('Movimiento finalizado: rotación.')
 
     def movement_callback(self, msg: PoligonoGoal):
-        rospy.loginfo('Petición de movimiento recibida.')
+        rospy.loginfo('''Petición de movimiento recibida..\n
+                      Tipo de movimiento: polígono.\n
+                      Número de lados solicitados: {lados} m\n
+                      Distancia de lados solicitada: {distancia} m\n
+                      Velocidad de movimiento: {velocidad} m/s'''.format(
+                          lados = msg.side_amount,
+                          distancia = msg.side_length,
+                          velocidad = self._max_linear_speed
+                      ))
         self._linear_movement_id = 0
         self._rotation_movement_id = 0
         self._success = True
@@ -166,5 +196,5 @@ class Poligono_ActionServer:
     
 if __name__ == '__main__':
     rospy.init_node('poligono_action_server')
-    server = Poligono_ActionServer(max_linear_speed=0.1, max_angle_diff=2.5)
+    server = Poligono_ActionServer()
     rospy.spin()

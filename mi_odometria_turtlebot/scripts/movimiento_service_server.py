@@ -16,12 +16,22 @@ class Movimiento_ServiceServer:
     # Número de veces que se envía el mensaje de parada al robot
     _max_stop = 3
 
-    def __init__(self, name='movimiento_service', max_linear_speed=0.05, max_rotation_speed=0.5, max_angle_diff=5):
+    def __init__(self,
+                 name='movimiento_service',
+                 max_linear_speed=0.1,
+                 min_linear_speed=0.01,
+                 max_rotation_speed=0.5,
+                 min_rotation_speed=0.1,
+                 p_regulator = 1.5,
+                 max_angle_diff=2):
         # Nombre del servidor de servicio
         self._name = name
         # Parámetros de configuración del movimiento
         self._max_linear_speed = max_linear_speed
+        self._min_linear_speed = min_linear_speed
         self._max_rotation_speed = max_rotation_speed
+        self._min_rotation_speed = min_rotation_speed
+        self._p_regulator = p_regulator
         self._max_angle_diff = math.radians(max_angle_diff)
         # Frecuencia de actualización del servidor
         self._r = rospy.Rate(10)
@@ -40,7 +50,7 @@ class Movimiento_ServiceServer:
         # Obtiene la orientación del robot sobre el eje z a partir de cuaternios
         orientation_q = msg.pose.pose.orientation
         orientation_list = [ orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w ]
-        (roll, pitch, yaw) = euler_from_quaternion(orientation_list)
+        (_, _, yaw) = euler_from_quaternion(orientation_list)
         self._odom_orientation_yaw = yaw
 
     def movement_stop(self):
@@ -57,14 +67,19 @@ class Movimiento_ServiceServer:
         initial_position_x = self._odom_position_x
         initial_position_y = self._odom_position_y
         current_distance = 0.0
-        # Establece el mensaje de movimiento con la velocidad lineal máxima
-        rospy.loginfo('Iniciando movimiento: línea recta.')
+        # Establece el mensaje de movimiento con la velocidad lineal
         twist = Twist()
         twist.linear.x = self._max_linear_speed
         # Envía el mensaje hasta que el robot alcance su destino
         while current_distance < distance_to_move:
-            rospy.logdebug('Distancia actual recorrida: ' + str(current_distance))
+            twist.linear.x = max(min(self._p_regulator*(distance_to_move-current_distance), self._max_linear_speed), self._min_linear_speed)
             self._pub.publish(twist)
+            # Información al usuario sobre el estado actual del movimiento
+            rospy.loginfo('{current}m/{goal}m ({percent}%)'.format(
+                goal = round(distance_to_move, 2),
+                current = round(current_distance, 2),
+                percent = round(100*current_distance/distance_to_move,2)
+            ))
             self._r.sleep()
             # Actualiza la distancia recorrida
             delta_x = self._odom_position_x-initial_position_x
@@ -82,14 +97,19 @@ class Movimiento_ServiceServer:
         # Se ajusta el ángulo objetivo, ya que la odometría va de -180º a 180º
         if goal_orientation_yaw > math.radians(180):
             goal_orientation_yaw -= math.radians(360)
-        # Establece el mensaje de movimiento con la velocidad rotacional máxima
-        rospy.loginfo('Iniciando movimiento: rotación.')
+        # Establece el mensaje de movimiento con la velocidad rotacional
         twist = Twist()
         twist.angular.z = self._max_rotation_speed
         # Envía el mensaje hasta que el robot alcance la orientación objetivo
-        while remaining_angle > self._max_angle_diff:
-            rospy.logdebug('Ángulo de rotación restante: ' + str(math.degrees(remaining_angle)))
+        while abs(remaining_angle) > self._max_angle_diff:
+            twist.angular.z = math.copysign(1.0, rotation_angle) * max(min(self._p_regulator*(abs(remaining_angle)), self._max_rotation_speed), self._min_rotation_speed)
             self._pub.publish(twist)
+            # Información al usuario sobre el estado actual del movimiento
+            rospy.loginfo('{current}º/{goal}º --- Ángulo restante: ({remaining}º)'.format(
+                goal = round(math.degrees(goal_orientation_yaw), 2),
+                current = round(math.degrees(self._odom_orientation_yaw), 2),
+                remaining = round(math.degrees(remaining_angle),2)
+            ))
             self._r.sleep()
             # Actualiza el ángulo de rotación
             remaining_angle = goal_orientation_yaw - self._odom_orientation_yaw
@@ -98,12 +118,25 @@ class Movimiento_ServiceServer:
         rospy.loginfo('Movimiento finalizado: rotación.')
 
     def movement_callback(self, msg: MovLinRotRequest):
-        rospy.loginfo('Petición de movimiento recibida.')
         # Movimiento lineal
         if msg.type == 0:
+            rospy.loginfo('''Petición de movimiento recibida..\n
+                      Tipo de movimiento: lineal.\n
+                      Distancia solicitada: {distancia} m\n
+                      Velocidad de movimiento: {velocidad} m/s'''.format(
+                          distancia = msg.magnitude,
+                          velocidad = self._max_linear_speed
+                      ))
             self.movement_linear(msg.magnitude)
         # Movimiento rotacional
         elif msg.type == 1:
+            rospy.loginfo('''Petición de movimiento recibida..\n
+                      Tipo de movimiento: rotación.\n
+                      Giro solicitado: {angulo} grados\n
+                      Velocidad de movimiento: {velocidad} m/s'''.format(
+                          angulo = msg.magnitude,
+                          velocidad = self._max_rotation_speed
+                      ))
             self.movement_rotational(msg.magnitude)
         # Envía una respuesta al cliente
         rospy.loginfo('Petición de movimiento completada.')

@@ -3,12 +3,13 @@
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from mi_odometria_turtlebot.msg import TrianguloAction, TrianguloGoal, TrianguloResult, TrianguloFeedback
+from sensor_msgs.msg import LaserScan
+from mi_odometria_turtlebot.msg import MovLinRotAction, MovLinRotGoal, MovLinRotResult, MovLinRotFeedback
 from tf.transformations import euler_from_quaternion
 import math
 import actionlib
 
-class Triangulo_ActionServer:
+class MovimientoLaser_ActionServer:
 
     # Inicialización de variables internas
     _odom_position_x = 0.0
@@ -16,22 +17,22 @@ class Triangulo_ActionServer:
     _odom_orientation_yaw = 0.0
     # Número de veces que se envía el mensaje de parada al robot
     _max_stop = 3
-    # Secuencia de movimientos a realizar para ejecutar el triángulo: 0, lineal; 1, rotación
-    _movement_sequence = [0,1,0,1,0,1]
-    # Variables para el seguimiento de la ejecución correcta de la petición
-    _linear_movement_id = 0
-    _rotation_movement_id = 0
+    # Detección de obstáculos
+    _path_free = True
+    # Variable para el seguimiento de la ejecución correcta de la petición
     _success = True
 
     def __init__(self,
-                 name='triangulo_action',
+                 name='movimiento_action',
                  max_linear_speed=0.1,
                  min_linear_speed=0.01,
                  max_rotation_speed=0.5,
                  min_rotation_speed=0.1,
                  p_regulator = 1.5,
-                 max_angle_diff=2):
-        # Nombre del servidor de servicio
+                 max_angle_diff=2,
+                 max_security_distance = 0.25,
+                 laser_angles_detection = 10):
+        # Nombre del servidor de acción
         self._name = name
         # Parámetros de configuración del movimiento
         self._max_linear_speed = max_linear_speed
@@ -40,15 +41,18 @@ class Triangulo_ActionServer:
         self._min_rotation_speed = min_rotation_speed
         self._p_regulator = p_regulator
         self._max_angle_diff = math.radians(max_angle_diff)
+        self._max_security_distance = max_security_distance
+        self._laser_angles_detection = laser_angles_detection
         # Frecuencia de actualización del servidor
         self._r = rospy.Rate(10)
-        # Suscripción a odometría y publicación en movimiento
+        # Suscripción a odometría, láser y publicación en movimiento
         self._sub = rospy.Subscriber('/odom', Odometry, self.update_position)
+        self._subLaser = rospy.Subscriber('/scan', LaserScan, self.laser_callback)
         self._pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
         # Inicia el servidor
-        self._server = actionlib.SimpleActionServer('triangulo_server', TrianguloAction, self.movement_callback, False)
+        self._server = actionlib.SimpleActionServer('movimiento_server', MovLinRotAction, self.movement_callback, False)
         self._server.start()
-        rospy.loginfo('Servidor de triángulo iniciado.')
+        rospy.loginfo('Servidor de movimiento iniciado.')
 
     def is_preempt_requested(self):
         # Comprueba si el cliente ha solicitado parar la acción
@@ -71,6 +75,27 @@ class Triangulo_ActionServer:
         (_, _, yaw) = euler_from_quaternion(orientation_list)
         self._odom_orientation_yaw = yaw
 
+    def laser_callback(self, msg:LaserScan):
+        # Comprueba si hay un obstáculo frente al robot en el rango de ángulos solicitado frente a él
+        #print(str(msg.ranges[0]) + ' ' + str(msg.ranges[89]) + ' ' + str(msg.ranges[179]) + ' ' + str(msg.ranges[269]))
+        #print(str(msg.ranges[2]) + ' ' + str(msg.ranges[-2]))
+        angle = 0
+        laser_measurement = 0
+        obstacle_detected = False
+        while angle < self._laser_angles_detection:
+            if msg.ranges[0-laser_measurement] < self._max_security_distance or msg.ranges[0+laser_measurement] < self._max_security_distance:
+                obstacle_detected = True
+                break
+            angle += math.degrees(msg.angle_increment)
+            laser_measurement += 1
+        # Si se ha detectado obstáculo, se detiene el robot; si no, se reanuda la marcha
+        if obstacle_detected and self._path_free == True:
+            self._path_free = False
+            rospy.loginfo('''Se ha detectado un obstáculo en el camino. El movimiento se detendrá hasta que sea seguro continuar.''')
+        elif not obstacle_detected and self._path_free == False:
+            self._path_free = True
+            rospy.loginfo('''El obstáculo ya no está presente. Ahora, es seguro continuar.''')
+
     def movement_stop(self):
         # Genera el mensaje de parada y lo envía las veces solicitadas
         twist = Twist()
@@ -81,20 +106,23 @@ class Triangulo_ActionServer:
         rospy.logdebug('Movimiento detenido.')
 
     def movement_linear(self, distance_to_move):
-        # Actualiza el id del movimiento actual
-        self._linear_movement_id += 1
         # Variables de seguimiento de posición y distancia recorrida
         initial_position_x = self._odom_position_x
         initial_position_y = self._odom_position_y
         current_distance = 0.0
         # Crea el mensaje de feedback
-        feedback_msg = TrianguloFeedback()
+        feedback_msg = MovLinRotFeedback()
         # Establece el mensaje de movimiento con la velocidad lineal máxima
-        rospy.loginfo('Iniciando movimiento: lado.')
+        rospy.loginfo('Iniciando movimiento: línea recta.')
         twist = Twist()
+        twist.linear.x = self._max_linear_speed
         # Envía el mensaje hasta que el robot alcance su destino
         while current_distance < distance_to_move:
-            twist.linear.x = max(min(self._p_regulator*(distance_to_move-current_distance), self._max_linear_speed), self._min_linear_speed)
+            # El robot solo se desplaza si es seguro continuar. En caso contrario, se detiene.
+            if self._path_free:
+                twist.linear.x = max(min(self._p_regulator*(distance_to_move-current_distance), self._max_linear_speed), self._min_linear_speed)
+            else:
+                twist.linear.x = 0
             self._pub.publish(twist)
             # Información al usuario sobre el estado actual del movimiento
             rospy.loginfo('{current}m/{goal}m ({percent}%)'.format(
@@ -103,8 +131,7 @@ class Triangulo_ActionServer:
                 percent = round(100*current_distance/distance_to_move,2)
             ))
             # Envía el feedback al cliente
-            feedback_msg.current_movement = 'Lado'
-            feedback_msg.movement_id = self._linear_movement_id
+            feedback_msg.current_movement = 'Línea recta'
             feedback_msg.movement_state = current_distance
             self._server.publish_feedback(feedback_msg)
             self._r.sleep()
@@ -117,11 +144,9 @@ class Triangulo_ActionServer:
             current_distance = math.sqrt(delta_x**2 + delta_y**2)
         # Detiene el robot al terminar
         self.movement_stop()
-        rospy.loginfo('Movimiento finalizado: lado.')
+        rospy.loginfo('Movimiento finalizado: línea recta.')
 
     def movement_rotational(self, rotation_angle):
-        # Actualiza el id del movimiento actual
-        self._rotation_movement_id += 1
         # Variables de seguimiento de orientación inicial y objetivo
         remaining_angle = math.radians(rotation_angle)
         initial_orientation_yaw = self._odom_orientation_yaw
@@ -130,9 +155,8 @@ class Triangulo_ActionServer:
         if goal_orientation_yaw > math.radians(180):
             goal_orientation_yaw -= math.radians(360)
         # Crea el mensaje de feedback
-        feedback_msg = TrianguloFeedback()
+        feedback_msg = MovLinRotFeedback()
         # Establece el mensaje de movimiento con la velocidad rotacional máxima
-        rospy.loginfo('Iniciando movimiento: rotación.')
         twist = Twist()
         # Envía el mensaje hasta que el robot alcance la orientación objetivo
         while abs(remaining_angle) > self._max_angle_diff:
@@ -146,7 +170,6 @@ class Triangulo_ActionServer:
             ))
             # Envía el feedback al cliente
             feedback_msg.current_movement = 'Rotación'
-            feedback_msg.movement_id = self._rotation_movement_id
             feedback_msg.movement_state = math.degrees(remaining_angle)
             self._server.publish_feedback(feedback_msg)
             self._r.sleep()
@@ -159,35 +182,35 @@ class Triangulo_ActionServer:
         self.movement_stop()
         rospy.loginfo('Movimiento finalizado: rotación.')
 
-    def movement_callback(self, msg: TrianguloGoal):
-        rospy.loginfo('''Petición de movimiento recibida..\n
-                      Tipo de movimiento: triángulo.\n
-                      Distancia de lados solicitada: {distancia} m\n
+    def movement_callback(self, msg: MovLinRotGoal):
+        self._success = True
+        # Movimiento lineal
+        if msg.type == 0:
+            rospy.loginfo('''Petición de movimiento recibida..\n
+                      Tipo de movimiento: lineal.\n
+                      Distancia solicitada: {distancia} m\n
                       Velocidad de movimiento: {velocidad} m/s'''.format(
-                          distancia = msg.side_length,
+                          distancia = msg.magnitude,
                           velocidad = self._max_linear_speed
                       ))
-        self._linear_movement_id = 0
-        self._rotation_movement_id = 0
-        self._success = True
-        # Lee la longitud del lado del triángulo
-        side_length = msg.side_length
-        # Ejecuta la secuencia de movimientos del triángulo
-        for mov in self._movement_sequence:
-            if mov == 0:
-                self.movement_linear(side_length)
-            elif mov == 1:
-                self.movement_rotational(120)
-            # Si el cliente ha solicitado cancelar la acción, rompe el bucle
-            if self._server.is_preempt_requested():
-                break
+            self.movement_linear(msg.magnitude)
+        # Movimiento rotacional
+        elif msg.type == 1:
+            rospy.loginfo('''Petición de movimiento recibida..\n
+                      Tipo de movimiento: rotación.\n
+                      Giro solicitado: {angulo} grados\n
+                      Velocidad de movimiento: {velocidad} m/s'''.format(
+                          angulo = msg.magnitude,
+                          velocidad = self._max_rotation_speed
+                      ))
+            self.movement_rotational(msg.magnitude)
         # Envía una respuesta al cliente si la acción no se ha cancelado
         if self._success:
-            rospy.loginfo('Petición de triángulo completada.')
-            result = TrianguloResult(success=True)
+            rospy.loginfo('Petición de movimiento completada.')
+            result = MovLinRotResult(success=True)
             self._server.set_succeeded(result)
     
 if __name__ == '__main__':
-    rospy.init_node('triangulo_action_server')
-    server = Triangulo_ActionServer()
+    rospy.init_node('movimiento_action_server')
+    server = MovimientoLaser_ActionServer()
     rospy.spin()

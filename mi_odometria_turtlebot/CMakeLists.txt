@@ -182,6 +182,8 @@ catkin_install_python(PROGRAMS
   scripts/triangulo_action_client.py
   scripts/poligono_action_server.py
   scripts/poligono_action_client.py
+  scripts/movimiento_laser_action_client.py
+  scripts/movimiento_laser_action_server.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

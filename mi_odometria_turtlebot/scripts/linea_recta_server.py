@@ -6,70 +6,102 @@ from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty, EmptyResponse
 import math
 
-# Velocidad lineal máxima (en m/s)
-max_linear_speed = 0.05
-# Distancia a avanzar (en metros)
-distance_to_move = 1.0
-# Distancia de inicio
-current_distance = 0.0
-# Posición de inicio
-init_pos = None
+class LineaRecta_Server:
+    # Variables de configuración internas
+    # Número de mensajes de parada que se enviarán al robot para asegurar su detención
+    _max_stop = 3
+    # Posición de inicio del movimiento
+    _initial_position = None
+    # Distancia actual recorrida
+    _current_distance = 0.0
+    # Seguimiento de la ejecución correcta de la acción
+    _success = True
 
-def update_position(msg: Odometry):
-    global current_distance, init_pos
+    # Inicializa los parámetros, publishers y subscribers necesarios
+    def __init__(self, max_linear_speed = 0.1, min_linear_speed = 0.01, p_regulator = 2, distance_to_move = 1.0):
+        # Parámetros de configuración del movimiento
+        self._max_linear_speed = max_linear_speed   # metros/segundo
+        self._min_linear_speed = min_linear_speed   # metros/segundo
+        self._p_regulator = p_regulator             # ganancia P para la regulación de velocidad
+        self._distance_to_move = distance_to_move    # metros
+        # Frecuencia de actualización del servidor
+        self._r = rospy.Rate(10)    # Hz
+        # Suscripción a la odometría
+        self._sub = rospy.Subscriber('/odom', Odometry, self.update_position)
+        # Publicación de comandos de movimiento
+        self._pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        # Inicia el servidor
+        self._server = rospy.Service('linea_recta', Empty, self.service_callback)
+        rospy.loginfo('Servidor de línea recta iniciado.')
 
-    # Si aún no se ha establecido la posición inicial, se define
-    if init_pos == None:
-        init_pos = msg.pose.pose.position
+    def service_callback(self, msg:Empty):
+        # Inicializa la variable de seguimiento
+        self._success = True
+        # Comunicación con el usuario
+        rospy.loginfo('''Movimiento lineal iniciado.\n
+                      Modo de control: odometría.\n
+                      Distancia solicitada: {distancia} m\n
+                      Velocidad de movimiento: {velocidad} m/s'''.format(
+                          distancia = self._distance_to_move,
+                          velocidad = self._max_linear_speed
+                      ))
+        # Inicia el movimiento
+        self.move_robot()
+        # Devuelve una respuesta al cliente
+        return EmptyResponse()
 
-    # Actualiza cuánto ha avanzado el robot respecto a la posición inicial
-    delta_x = msg.pose.pose.position.x-init_pos.x
-    delta_y = msg.pose.pose.position.y-init_pos.y
+    # Controla la ejecución del bucle principal de movimiento
+    def move_robot(self):
+        # Creación del mensaje de comando de velocidad
+        twist = Twist()
+        # Restablece la posición inicial y recorrida del robot
+        self._initial_position = None
+        self._current_distance = 0.0
+        # Publica el comando de velocidad hasta alcanzar la distancia deseada
+        while self._current_distance < self._distance_to_move:
+            # Envía comandos de avance al robot, adaptando la velocidad a la distancia restante
+            twist.linear.x = max(min(self._p_regulator*(self._distance_to_move-self._current_distance), self._max_linear_speed), self._min_linear_speed)
+            self._pub.publish(twist)
+            # Información al usuario sobre el estado actual del movimiento
+            rospy.loginfo('{current}m/{goal}m ({percent}%)'.format(
+                goal = round(self._distance_to_move, 2),
+                current = round(self._current_distance, 2),
+                percent = round(100*self._current_distance/self._distance_to_move,2)
+            ))
+            self._r.sleep()
+        # Tras completar el movimiento, detiene al robot
+        self.movement_stop(self._max_stop)
+        rospy.loginfo('''Movimiento completado con éxito.\n
+                      El robot ha avanzado {distancia} metro/s.'''.format(
+                          distancia = self._distance_to_move
+                      ))
 
-    current_distance = math.sqrt(delta_x**2 + delta_y**2)
+    # Actualiza la posición actual del robot y la distancia recorrida
+    def update_position(self, msg:Odometry):
+        # Si aún no se ha establecido la posición inicial, se define su valor
+        if self._initial_position == None:
+            self._initial_position = msg.pose.pose.position
+        # Actualiza la distancia recorrida por el robot respecto a la posición inicial
+        delta_x = msg.pose.pose.position.x-self._initial_position.x
+        delta_y = msg.pose.pose.position.y-self._initial_position.y
+        self._current_distance = math.sqrt(delta_x**2 + delta_y**2)
+        #print(self._current_distance)
 
-def movement_stop():
-    # Número de veces que se enviará el mensaje de parada para asegurar que el robot lo recibe
-    max_i = 3
-    # Frecuencia de petición de parada
-    r = rospy.Rate(10)
-    # Genera el mensaje de parada y lo envía las veces solicitadas
-    twist = Twist()
-    rospy.loginfo('Deteniendo movimiento...')
-    for i in range(max_i):
-        pub.publish(twist)
-        r.sleep()
-    rospy.loginfo('Movimiento detenido.')
-
-def service_callback(msg: Empty):
-    global max_linear_speed, distance_to_move, current_distance, init_pos
-    rospy.loginfo('Iniciando movimiento: línea recta.')
-    # Establece el comando de movimiento con la velocidad máxima
-    twist = Twist()
-    twist.linear.x = max_linear_speed
-    r = rospy.Rate(10)
-    while not rospy.is_shutdown():
-        rospy.loginfo('Distancia actual recorrida: ' + str(current_distance))
-        # Si aún no se ha completado el movimiento, se mantiene el comando
-        if current_distance < distance_to_move:
-            pub.publish(twist)
-            r.sleep()
-        else:
-        # Si se ha completado, se detiene el robot y el programa
-            movement_stop()
-            break
-    # Restablece la posición inicial
-    init_pos = None
-    # Envía el mensaje de respuesta al cliente
-    rospy.loginfo('Movimiento finalizado.')
-    return EmptyResponse()
+    # Envía varios mensajes de parada para asegurar que el robot los recibe y se detiene correctamente
+    def movement_stop(self, num_msg = 3):
+        # Genera el mensaje de parada y lo envía las veces solicitadas
+        twist = Twist()
+        rospy.logdebug('Deteniendo movimiento...')
+        for i in range(num_msg):
+            self._pub.publish(twist)
+            self._r.sleep()
+        rospy.logdebug('Movimiento detenido.')
 
 if __name__ == '__main__':
-    rospy.init_node('linea_recta_server', anonymous = True)
-    # Se subscribe a los temas de lectura y publicación
-    sub = rospy.Subscriber('/odom', Odometry, update_position)
-    pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-    # Inicia el servidor
-    s = rospy.Service('linea_recta', Empty, service_callback)
-    rospy.loginfo('Servidor de línea recta iniciado.')
-    rospy.spin()
+    try:
+        rospy.init_node('linea_recta_server', anonymous=True)
+        rospy.loginfo('Nodo iniciado.\n')
+        movimiento = LineaRecta_Server()
+        rospy.spin()
+    except rospy.ROSInterruptException:
+        pass
