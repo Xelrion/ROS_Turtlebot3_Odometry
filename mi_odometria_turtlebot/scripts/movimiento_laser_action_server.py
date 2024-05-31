@@ -80,7 +80,7 @@ class MovimientoLaser_ActionServer:
         angle = 0
         laser_measurement = 0
         obstacle_detected = False
-        while angle < self._laser_angles_detection:
+        while angle <= self._laser_angles_detection:
             if msg.ranges[0-laser_measurement] < self._max_security_distance or msg.ranges[0+laser_measurement] < self._max_security_distance:
                 obstacle_detected = True
                 break
