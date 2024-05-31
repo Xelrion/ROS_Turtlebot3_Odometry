@@ -1,0 +1,6 @@
+# PETICIÓN
+int64 tipo # Tipo de movimiento: 0=lineal, 1=rotación
+float64 magnitud # Magnitud del movimiento: lineal=>metros, rotación=>grados sexagesimales
+---
+# RESPUESTA
+bool exito # True si el movimiento se ha ejecutado correctamente

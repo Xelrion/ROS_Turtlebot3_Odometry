@@ -1,0 +1,10 @@
+# GOAL
+int64 tipo # Tipo de movimiento: 0=lineal, 1=rotación
+float64 magnitud # Magnitud del movimiento: lineal=>metros, rotación=>grados sexagesimales
+---
+# RESULT
+bool exito # True si el movimiento se ha ejecutado correctamente
+---
+# FEEDBACK
+string tipo_movimiento # Movimiento actual: avance, rotación...
+float64 estado_movimiento # Posición u orientación actual

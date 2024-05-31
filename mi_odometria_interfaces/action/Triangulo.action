@@ -1,0 +1,10 @@
+# GOAL
+float64 longitud_lado # Longitud del lado del triángulo
+---
+# RESULT
+bool exito # True si el triángulo se ha ejecutado correctamente
+---
+# FEEDBACK
+string tipo_movimiento # Movimiento actual: lado, giro...
+int64 id_movimiento # Id del movimiento actual: lado 1, giro 1...
+float64 estado_movimiento # Posición u orientación actual
